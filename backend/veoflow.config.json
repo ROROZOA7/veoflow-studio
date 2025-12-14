@@ -1,0 +1,73 @@
+{
+  "browser": {
+    "engine": "playwright",
+    "headless": false,
+    "chromeProfilePath": "./chromedata",
+    "userDataDir": "./chromedata",
+    "useExistingProfile": false,
+    "existingProfilePath": "",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "slowMo": 100,
+    "timeout": 60000
+  },
+  "flow": {
+    "url": "https://labs.google/fx/tools/flow/",
+    "timeoutGenerateMs": 240000,
+    "pollingIntervalMs": 2000,
+    "maxRetries": 3,
+    "retryDelayMs": 5000,
+    "selectors": {
+      "promptInput": "textarea[placeholder*='prompt'], textarea[aria-label*='prompt'], textarea[placeholder*='Enter'], textarea[placeholder*='Describe'], textarea[placeholder*='Create'], textarea, [contenteditable='true'], [contenteditable], [role='textbox']",
+      "generateButton": "button:has-text('Generate'), button[aria-label*='Generate'], button[type='submit'], button:has-text('Create')",
+      "videoElement": "video",
+      "downloadButton": "button:has-text('Download'), a[download], button[aria-label*='Download']",
+      "errorMessage": ".error, [role='alert'], [class*='error'], [class*='Error']",
+      "emptyState": "text=There doesn't seem to be anything here, text=Try a different prompt"
+    }
+  },
+  "paths": {
+    "downloads": "./output",
+    "projects": "./projects",
+    "chromedata": "./chromedata",
+    "temp": "./temp"
+  },
+  "render": {
+    "videoFormat": "mp4",
+    "stitchUsingFFmpeg": true,
+    "defaultTransition": "fade",
+    "transitionDuration": 0.5,
+    "outputResolution": "1920x1080",
+    "fps": 30
+  },
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4-turbo-preview",
+    "apiKey": "",
+    "temperature": 0.7,
+    "maxTokens": 2000
+  },
+  "queue": {
+    "concurrency": 1,
+    "maxAttempts": 3,
+    "backoff": {
+      "type": "exponential",
+      "delay": 5000
+    }
+  },
+  "security": {
+    "encryptCookies": true,
+    "cookieExpiryDays": 30,
+    "rateLimit": {
+      "enabled": true,
+      "maxRequests": 10,
+      "windowMs": 60000
+    }
+  },
+  "profiles": {
+    "directory": "./profiles",
+    "activeProfileId": "7a093f10-2480-41cb-b2f6-f696bc397417"
+  }
+}
