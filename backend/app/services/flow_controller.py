@@ -975,6 +975,178 @@ class FlowController:
             logger.debug(f"Page verification error: {e}")
             return False
     
+    async def configure_render_settings(
+        self,
+        page: Page,
+        aspect_ratio: str = "16:9",
+        videos_per_scene: int = 2,
+        model: str = "veo3.1-fast"
+    ) -> None:
+        """
+        Configure render settings in Flow UI before rendering
+        
+        Args:
+            page: Playwright page object
+            aspect_ratio: "16:9" or "9:16"
+            videos_per_scene: 1, 2, 3, or 4
+            model: Model name (e.g., "veo3.1-fast")
+        """
+        logger.info(f"Configuring render settings: aspect_ratio={aspect_ratio}, videos_per_scene={videos_per_scene}, model={model}")
+        
+        try:
+            # Look for settings icon/button (usually in top right)
+            # Try various selectors for settings icon
+            settings_selectors = [
+                'button[aria-label*="Settings"]',
+                'button[aria-label*="settings"]',
+                'button[aria-label*="Cài đặt"]',
+                'button[class*="settings"]',
+                'button[class*="Settings"]',
+                'button:has(svg[class*="settings"])',
+                'button:has(svg[class*="Settings"])',
+                '[data-testid*="settings"]',
+                'button:has-text("Settings")',
+            ]
+            
+            settings_button = None
+            for selector in settings_selectors:
+                try:
+                    elements = await page.locator(selector).all()
+                    for elem in elements:
+                        if await elem.is_visible():
+                            settings_button = elem
+                            logger.info(f"Found settings button with selector: {selector}")
+                            break
+                    if settings_button:
+                        break
+                except:
+                    continue
+            
+            if not settings_button:
+                logger.warning("Settings button not found - using default settings")
+                return
+            
+            # Click settings button to open settings dialog
+            await settings_button.click()
+            await asyncio.sleep(1)  # Wait for dialog to open
+            
+            # Configure aspect ratio
+            aspect_label_map = {
+                "16:9": ["Khổ ngang (16:9)", "Landscape (16:9)", "16:9"],
+                "9:16": ["Khổ dọc (9:16)", "Portrait (9:16)", "9:16"]
+            }
+            
+            aspect_labels = aspect_label_map.get(aspect_ratio, aspect_label_map["16:9"])
+            aspect_set = False
+            
+            for label in aspect_labels:
+                try:
+                    # Look for aspect ratio dropdown
+                    aspect_selectors = [
+                        f'text="{label}"',
+                        f'button:has-text("{label}")',
+                        f'[role="option"]:has-text("{label}")',
+                        f'div:has-text("{label}")',
+                    ]
+                    
+                    for selector in aspect_selectors:
+                        elem = page.locator(selector).first
+                        if await elem.count() > 0 and await elem.is_visible():
+                            await elem.click()
+                            logger.info(f"Set aspect ratio to {aspect_ratio} using label: {label}")
+                            aspect_set = True
+                            await asyncio.sleep(0.5)
+                            break
+                    
+                    if aspect_set:
+                        break
+                except:
+                    continue
+            
+            # Configure videos per scene
+            try:
+                videos_labels = [str(videos_per_scene), f"{videos_per_scene}"]
+                for label in videos_labels:
+                    try:
+                        video_selectors = [
+                            f'text="{label}"',
+                            f'button:has-text("{label}")',
+                            f'[role="option"]:has-text("{label}")',
+                            f'div:has-text("{label}")',
+                        ]
+                        
+                        for selector in video_selectors:
+                            elem = page.locator(selector).first
+                            if await elem.count() > 0 and await elem.is_visible():
+                                await elem.click()
+                                logger.info(f"Set videos per scene to {videos_per_scene}")
+                                await asyncio.sleep(0.5)
+                                break
+                    except:
+                        continue
+            except Exception as e:
+                logger.warning(f"Failed to set videos per scene: {e}")
+            
+            # Configure model
+            model_label_map = {
+                "veo3.1-fast": ["Veo 3.1 - Fast", "Veo3.1-fast"],
+                "veo3.1-standard": ["Veo 3.1 - Standard", "Veo3.1-standard"],
+            }
+            
+            model_labels = model_label_map.get(model, model_label_map["veo3.1-fast"])
+            model_set = False
+            
+            for label in model_labels:
+                try:
+                    model_selectors = [
+                        f'text="{label}"',
+                        f'button:has-text("{label}")',
+                        f'[role="option"]:has-text("{label}")',
+                        f'div:has-text("{label}")',
+                    ]
+                    
+                    for selector in model_selectors:
+                        elem = page.locator(selector).first
+                        if await elem.count() > 0 and await elem.is_visible():
+                            await elem.click()
+                            logger.info(f"Set model to {model} using label: {label}")
+                            model_set = True
+                            await asyncio.sleep(0.5)
+                            break
+                    
+                    if model_set:
+                        break
+                except:
+                    continue
+            
+            # Close settings dialog if needed (click outside or close button)
+            try:
+                close_selectors = [
+                    'button[aria-label*="Close"]',
+                    'button[aria-label*="close"]',
+                    'button:has(svg[class*="close"])',
+                    'button:has(svg[class*="Close"])',
+                ]
+                
+                for selector in close_selectors:
+                    try:
+                        close_btn = page.locator(selector).first
+                        if await close_btn.count() > 0 and await close_btn.is_visible():
+                            await close_btn.click()
+                            logger.info("Closed settings dialog")
+                            await asyncio.sleep(0.5)
+                            break
+                    except:
+                        continue
+            except:
+                pass  # Dialog might close automatically or doesn't need closing
+            
+            logger.info("Render settings configured successfully")
+            
+        except Exception as e:
+            logger.warning(f"Failed to configure render settings: {e}. Using defaults.")
+            # Don't fail the render if settings can't be configured
+    
     async def ensure_new_project(self, page: Page) -> None:
         """Ensure we're in a new project/editor view by clicking 'New project' if needed"""
         logger.info("Checking if we need to create a new project...")

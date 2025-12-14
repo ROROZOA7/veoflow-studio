@@ -20,8 +20,9 @@ export function useScenes(projectId: string | null) {
   const createMutation = useMutation({
     mutationFn: (data: { project_id: string; number: number; prompt: string; script?: string }) =>
       api.scenes.create(data),
-    onSuccess: (newScene) => {
-      queryClient.invalidateQueries({ queryKey: ['scenes', newScene.project_id] })
+    onSuccess: async (newScene) => {
+      // Wait for refetch to complete to ensure UI updates
+      await queryClient.refetchQueries({ queryKey: ['scenes', newScene.project_id] })
       useSceneStore.getState().addScene(newScene)
     },
   })
@@ -29,8 +30,9 @@ export function useScenes(projectId: string | null) {
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) =>
       api.scenes.update(id, data),
-    onSuccess: (updatedScene, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['scenes', updatedScene.project_id] })
+    onSuccess: async (updatedScene, variables) => {
+      // Wait for refetch to complete to ensure UI updates
+      await queryClient.refetchQueries({ queryKey: ['scenes', updatedScene.project_id] })
       queryClient.invalidateQueries({ queryKey: ['scene', variables.id] })
       useSceneStore.getState().updateScene(variables.id, updatedScene)
     },
@@ -38,12 +40,19 @@ export function useScenes(projectId: string | null) {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.scenes.delete(id),
-    onSuccess: (_, id) => {
+    onSuccess: async (_, id) => {
       const scene = useSceneStore.getState().getScene(id)
-      if (scene) {
-        queryClient.invalidateQueries({ queryKey: ['scenes', scene.project_id] })
-        useSceneStore.getState().deleteScene(id)
+      // Always refetch queries for this project to ensure UI updates with fresh data
+      const targetProjectId = projectId || scene?.project_id
+      if (targetProjectId) {
+        // Wait for refetch to complete
+        await queryClient.refetchQueries({ queryKey: ['scenes', targetProjectId] })
       }
+      // Remove from store if present
+      useSceneStore.getState().deleteScene(id)
+    },
+    onError: (error: any) => {
+      console.error('Delete scene failed:', error)
     },
   })
 
@@ -62,13 +71,16 @@ export function useScenes(projectId: string | null) {
     },
   })
 
+  // Always use query.data if available, fallback to filtered store scenes only if query hasn't loaded yet
+  const displayScenes = query.data ?? (query.isLoading ? [] : scenes.filter((s) => s.project_id === projectId || !projectId))
+
   return {
-    scenes: query.data || scenes.filter((s) => s.project_id === projectId || !projectId),
+    scenes: displayScenes,
     isLoading: query.isLoading,
     error: query.error,
     createScene: createMutation.mutate,
     updateScene: updateMutation.mutate,
-    deleteScene: deleteMutation.mutate,
+    deleteScene: deleteMutation.mutateAsync,
     renderScene: renderMutation.mutate,
     isCreating: createMutation.isPending,
     isUpdating: updateMutation.isPending,

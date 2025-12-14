@@ -135,6 +135,13 @@ class ApiClient {
       this.request<void>(`/api/render/scenes/${sceneId}/cancel`, {
         method: 'POST',
       }),
+    renderAll: (projectId: string) =>
+      this.request<{ task_ids: string[]; status: string; scenes_count: number }>(
+        `/api/render/projects/${projectId}/render-all`,
+        {
+          method: 'POST',
+        }
+      ),
   };
 
   // Queue API

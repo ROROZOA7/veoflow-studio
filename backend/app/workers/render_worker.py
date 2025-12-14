@@ -9,6 +9,7 @@ from app.config import settings
 from app.services.render_manager import RenderManager
 from app.models.scene import Scene
 from app.models.character import CharacterDNA
+from app.models.project import Project
 from app.core.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,16 @@ def render_scene_task(self, scene_id: str, project_id: str):
         
         logger.info(f"Scene found: prompt={scene.prompt[:50]}..., status={scene.status}")
         
+        # Get project to retrieve render settings
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            logger.error(f"Project not found: {project_id}")
+            raise ValueError(f"Project {project_id} not found")
+        
+        # Get render settings from project
+        render_settings = project.get_render_settings()
+        logger.info(f"Using render settings: {render_settings}")
+        
         # Get characters for this project
         logger.info(f"Fetching characters for project: {project_id}")
         characters = db.query(CharacterDNA).filter(
@@ -104,10 +115,10 @@ def render_scene_task(self, scene_id: str, project_id: str):
             asyncio.set_event_loop(loop)
         
         try:
-            # Run async render
+            # Run async render with render settings
             logger.info("Starting async render process...")
             result = loop.run_until_complete(
-                render_manager.render_scene(scene_dict, project_id, characters_list)
+                render_manager.render_scene(scene_dict, project_id, characters_list, render_settings)
             )
             logger.info(f"Render completed: success={result.get('success')}, error={result.get('error', 'None')}")
         finally:

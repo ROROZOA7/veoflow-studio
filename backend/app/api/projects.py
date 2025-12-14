@@ -24,10 +24,17 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = None
 
 
+class RenderSettings(BaseModel):
+    aspect_ratio: Optional[str] = None  # "16:9" or "9:16"
+    videos_per_scene: Optional[int] = None  # 1, 2, 3, or 4
+    model: Optional[str] = None  # "veo3.1-fast" or other model names
+
+
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     script: Optional[str] = None
+    render_settings: Optional[RenderSettings] = None
 
 
 class ScriptGenerateRequest(BaseModel):
@@ -45,6 +52,7 @@ class ProjectResponse(BaseModel):
     description: Optional[str] = None
     script: Optional[str] = None
     metadata: Optional[dict] = None
+    render_settings: Optional[dict] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     
@@ -57,11 +65,17 @@ async def create_project(
     project_data: ProjectCreate,
     db: Session = Depends(get_db)
 ):
-    """Create a new project"""
+    """Create a new project with default render settings"""
     project = Project(
         id=str(uuid.uuid4()),
         name=project_data.name,
         description=project_data.description
+    )
+    # Initialize with default render settings
+    project.update_render_settings(
+        aspect_ratio="16:9",
+        videos_per_scene=2,
+        model="veo3.1-fast"
     )
     db.add(project)
     db.commit()
@@ -204,6 +218,12 @@ async def update_project(
         project.description = project_data.description
     if project_data.script is not None:
         project.script = project_data.script
+    
+    # Update render settings if provided
+    if project_data.render_settings is not None:
+        render_settings_dict = project_data.render_settings.dict(exclude_unset=True)
+        if render_settings_dict:
+            project.update_render_settings(**render_settings_dict)
     
     db.commit()
     db.refresh(project)

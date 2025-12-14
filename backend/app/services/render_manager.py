@@ -34,7 +34,8 @@ class RenderManager:
         self,
         scene: Dict[str, Any],
         project_id: str,
-        characters: Optional[List[Dict[str, Any]]] = None
+        characters: Optional[List[Dict[str, Any]]] = None,
+        render_settings: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Render a single scene using browser automation
@@ -43,6 +44,7 @@ class RenderManager:
             scene: Scene dictionary with prompt and metadata
             project_id: Project ID for organizing outputs
             characters: Optional list of characters for consistency
+            render_settings: Optional render settings dict with aspect_ratio, videos_per_scene, model
         
         Returns:
             {
@@ -260,6 +262,18 @@ class RenderManager:
             # Ensure we're in a new project/editor view
             logger.info("Ensuring we're in editor view...")
             await self.flow_controller.ensure_new_project(page)
+            
+            # Configure render settings if provided
+            if render_settings:
+                logger.info(f"Configuring render settings: {render_settings}")
+                await self.flow_controller.configure_render_settings(
+                    page,
+                    aspect_ratio=render_settings.get("aspect_ratio", "16:9"),
+                    videos_per_scene=render_settings.get("videos_per_scene", 2),
+                    model=render_settings.get("model", "veo3.1-fast")
+                )
+            else:
+                logger.info("No render settings provided, using defaults")
             
             # Build prompt with character consistency
             prompt = self._build_scene_prompt(scene, characters)

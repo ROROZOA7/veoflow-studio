@@ -3,36 +3,73 @@
 import { useParams } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useScenes } from '@/hooks/useScenes'
+import { useProjects } from '@/hooks/useProjects'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Loader2, Plus, Play, Video, Trash2 } from 'lucide-react'
+import { Loader2, Plus, Play, Video, Trash2, Settings, Film } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
+import { RenderSettingsDialog } from '@/components/RenderSettingsDialog'
+import { useQueryClient } from '@tanstack/react-query'
 
 export default function ProjectPage() {
   const params = useParams()
   const projectId = params.id as string
   const { project, isLoading: projectLoading } = useProject(projectId)
   const { scenes, isLoading: scenesLoading, createScene, deleteScene, renderScene } = useScenes(projectId)
+  const { updateProject } = useProjects()
+  const queryClient = useQueryClient()
   const [showSceneForm, setShowSceneForm] = useState(false)
   const [scenePrompt, setScenePrompt] = useState('')
   const [sceneNumber, setSceneNumber] = useState(1)
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false)
+
+  // Get render settings with defaults
+  const renderSettings = project?.render_settings || {
+    aspect_ratio: '16:9' as const,
+    videos_per_scene: 2 as const,
+    model: 'veo3.1-fast',
+  }
+
+  // Calculate next scene number based on existing scenes
+  const getNextSceneNumber = () => {
+    if (!scenes || scenes.length === 0) return 1
+    const maxNumber = Math.max(...scenes.map(s => s.number || 0), 0)
+    return maxNumber + 1
+  }
+
+  const handleOpenSceneForm = () => {
+    const nextNumber = getNextSceneNumber()
+    setSceneNumber(nextNumber)
+    setShowSceneForm(true)
+  }
 
   const handleCreateScene = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!scenePrompt.trim()) return
 
     try {
-      await createScene({
-        project_id: projectId,
-        number: sceneNumber,
-        prompt: scenePrompt,
-      })
-      setScenePrompt('')
-      setSceneNumber(scenes.length + 1)
-      setShowSceneForm(false)
+      // Use mutate with callback since createScene uses mutate, not mutateAsync
+      createScene(
+        {
+          project_id: projectId,
+          number: sceneNumber,
+          prompt: scenePrompt,
+        },
+        {
+          onSuccess: () => {
+            setScenePrompt('')
+            setSceneNumber(getNextSceneNumber())
+            setShowSceneForm(false)
+          },
+          onError: (error: any) => {
+            console.error('Failed to create scene:', error)
+            alert(`Failed to create scene: ${error.message || 'Unknown error'}`)
+          },
+        }
+      )
     } catch (error) {
       console.error('Failed to create scene:', error)
     }
@@ -46,6 +83,56 @@ export default function ProjectPage() {
     } catch (error: any) {
       console.error('Failed to start render:', error)
       alert(`Failed to start render: ${error.message || 'Unknown error'}\n\nCheck the Logs page for details.`)
+    }
+  }
+
+  const handleDeleteScene = async (sceneId: string) => {
+    if (!confirm('Are you sure you want to delete this scene? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      await deleteScene(sceneId)
+      console.log(`Scene ${sceneId} deleted successfully`)
+    } catch (error: any) {
+      console.error('Failed to delete scene:', error)
+      alert(`Failed to delete scene: ${error.message || 'Unknown error'}`)
+    }
+  }
+
+  const handleRenderAll = async () => {
+    // Force a fresh refetch of scenes before rendering to ensure we have the latest data
+    await queryClient.refetchQueries({ queryKey: ['scenes', projectId] })
+    
+    // Get fresh scenes data after refetch
+    const freshScenes = queryClient.getQueryData(['scenes', projectId]) as any[] || scenes
+    
+    if (!freshScenes || freshScenes.length === 0) {
+      alert('No scenes to render')
+      return
+    }
+
+    const pendingScenes = freshScenes.filter(s => s.status === 'pending')
+    if (pendingScenes.length === 0) {
+      alert('No pending scenes to render. All scenes are already rendered, rendering, or failed.')
+      return
+    }
+
+    if (!confirm(`Render all ${pendingScenes.length} pending scene(s)? This will queue all scenes for rendering.`)) {
+      return
+    }
+
+    try {
+      const { api } = await import('@/lib/api')
+      const result = await api.render.renderAll(projectId)
+      console.log(`Render all request sent successfully: ${result.scenes_count} scenes queued`)
+      alert(`Successfully queued ${result.scenes_count} scene(s) for rendering!`)
+      
+      // Refetch scenes to update status
+      await queryClient.refetchQueries({ queryKey: ['scenes', projectId] })
+    } catch (error: any) {
+      console.error('Failed to start render all:', error)
+      alert(`Failed to start render all: ${error.message || 'Unknown error'}\n\nCheck the Logs page for details.`)
     }
   }
 
@@ -76,18 +163,55 @@ export default function ProjectPage() {
         <Link href="/" className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-block">
           ← Back to Projects
         </Link>
-        <h1 className="text-3xl font-bold">{project.name}</h1>
-        {project.description && (
-          <p className="text-muted-foreground mt-2">{project.description}</p>
-        )}
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">{project.name}</h1>
+            {project.description && (
+              <p className="text-muted-foreground mt-2">{project.description}</p>
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowSettingsDialog(true)}
+            className="flex items-center gap-2"
+          >
+            <Settings className="h-4 w-4" />
+            Settings
+          </Button>
+        </div>
       </div>
+
+      <RenderSettingsDialog
+        open={showSettingsDialog}
+        onOpenChange={setShowSettingsDialog}
+        projectId={projectId}
+        currentSettings={renderSettings}
+        onSave={() => {
+          // Invalidate project query to refresh data
+          window.location.reload()
+        }}
+      />
 
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-2xl font-semibold">Scenes</h2>
-        <Button onClick={() => setShowSceneForm(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Scene
-        </Button>
+        <div className="flex gap-2">
+          {scenes && scenes.length > 0 && (
+            <Button
+              variant="default"
+              onClick={handleRenderAll}
+              disabled={scenes.filter(s => s.status === 'pending').length === 0}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              <Film className="mr-2 h-4 w-4" />
+              Render All Scenes
+            </Button>
+          )}
+          <Button onClick={handleOpenSceneForm}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Scene
+          </Button>
+        </div>
       </div>
 
       {showSceneForm && (
@@ -103,10 +227,16 @@ export default function ProjectPage() {
                 <Input
                   type="number"
                   value={sceneNumber}
-                  onChange={(e) => setSceneNumber(parseInt(e.target.value) || 1)}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value)
+                    setSceneNumber(isNaN(value) ? 1 : Math.max(1, value))
+                  }}
                   className="mt-1"
                   min={1}
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Scene number is auto-incremented, but you can change it
+                </p>
               </div>
               <div>
                 <label className="text-sm font-medium">Scene Prompt</label>
@@ -126,6 +256,7 @@ export default function ProjectPage() {
                   onClick={() => {
                     setShowSceneForm(false)
                     setScenePrompt('')
+                    setSceneNumber(getNextSceneNumber())
                   }}
                 >
                   Cancel
@@ -148,7 +279,7 @@ export default function ProjectPage() {
             <p className="text-muted-foreground mb-4">
               Create your first scene to start generating videos
             </p>
-            <Button onClick={() => setShowSceneForm(true)}>
+            <Button onClick={handleOpenSceneForm}>
               <Plus className="mr-2 h-4 w-4" />
               Add Scene
             </Button>
@@ -179,7 +310,7 @@ export default function ProjectPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => deleteScene(scene.id)}
+                      onClick={() => handleDeleteScene(scene.id)}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
