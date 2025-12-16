@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.services.browser_manager import BrowserManager
 from app.services.profile_manager import ProfileManager
-from app.config import config_manager, settings
+from app.config import config_manager, settings, IMAGES_PATH
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -97,8 +97,9 @@ async def check_profile_session():
                 logger.warning(f"? Unknown page: {current_url}")
             
             # Take screenshot
-            screenshot_path = profile_path.parent.parent / "logs" / "session_check.png"
-            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            images_dir = Path(IMAGES_PATH)
+            images_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = images_dir / "session_check.png"
             await page.screenshot(path=str(screenshot_path), full_page=True)
             logger.info(f"\nScreenshot saved to: {screenshot_path}")
             

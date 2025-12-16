@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = Field(default="", description="Gemini API key")
     
     # Browser
-    BROWSER_HEADLESS: bool = Field(default=False, description="Run browser in headless mode")
+    BROWSER_HEADLESS: bool = Field(default=True, description="Run browser in headless mode")
     CHROME_PROFILE_PATH: str = Field(
         default="./chromedata",
         description="Chrome profile path"
@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     DOWNLOADS_PATH: str = Field(default="./output", description="Downloads directory")
     PROJECTS_PATH: str = Field(default="./projects", description="Projects directory")
     TEMP_PATH: str = Field(default="./temp", description="Temporary files directory")
+    IMAGES_PATH: str = Field(default="./images", description="Images directory for screenshots and thumbnails")
     
     # Security
     SECRET_KEY: str = Field(
@@ -128,7 +129,7 @@ class ConfigManager:
         return {
             "browser": {
                 "engine": "playwright",
-                "headless": False,
+                "headless": True,
                 "chromeProfilePath": "./chromedata",
                 "userDataDir": "./chromedata",
                 "useExistingProfile": False,
@@ -155,7 +156,8 @@ class ConfigManager:
                 "downloads": "./output",
                 "projects": "./projects",
                 "chromedata": "./chromedata",
-                "temp": "./temp"
+                "temp": "./temp",
+                "images": "./images"
             },
             "render": {
                 "videoFormat": "mp4",
@@ -167,7 +169,7 @@ class ConfigManager:
             },
             "ai": {
                 "provider": "openai",
-                "model": "gpt-4-turbo-preview",
+                "model": "gpt-4o-mini",
                 "apiKey": "",
                 "temperature": 0.7,
                 "maxTokens": 2000
@@ -203,5 +205,6 @@ FLOW_SELECTORS = config_manager.get("flow.selectors", {})
 BROWSER_HEADLESS = config_manager.get("browser.headless", settings.BROWSER_HEADLESS)
 CHROME_PROFILE_PATH = config_manager.get("browser.chromeProfilePath", settings.CHROME_PROFILE_PATH)
 DOWNLOADS_PATH = config_manager.get("paths.downloads", settings.DOWNLOADS_PATH)
+IMAGES_PATH = config_manager.get("paths.images", settings.IMAGES_PATH)
 POLLING_INTERVAL_MS = config_manager.get("flow.pollingIntervalMs", 2000)
 

@@ -5,8 +5,10 @@ Render Manager Service - Orchestrates scene rendering workflow
 import logging
 import os
 import asyncio
+import fcntl  # For file-based profile locking on Unix-like systems
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from shutil import copytree
 from app.services.browser_manager import BrowserManager
 from app.services.flow_controller import FlowController
 from app.services.character_manager import CharacterManager
@@ -19,10 +21,10 @@ class RenderManager:
     """Manages the complete scene rendering workflow"""
     
     def __init__(self, worker_id: str = None):
-        import os
         # Use worker ID if available, otherwise use process ID
         if not worker_id:
             worker_id = os.getenv("CELERY_WORKER_NAME", f"worker_{os.getpid()}")
+        self.worker_id = worker_id
         self.browser_manager = BrowserManager(worker_id=worker_id)
         self.flow_controller = FlowController(self.browser_manager)
         self.character_manager = CharacterManager()
@@ -44,7 +46,6 @@ class RenderManager:
             scene: Scene dictionary with prompt and metadata
             project_id: Project ID for organizing outputs
             characters: Optional list of characters for consistency
-            render_settings: Optional render settings dict with aspect_ratio, videos_per_scene, model
         
         Returns:
             {
@@ -54,7 +55,17 @@ class RenderManager:
                 "error": str (if failed)
             }
         """
+        # Get scene context for logging at the start
+        scene_id_str = scene.get("id", "unknown")
+        scene_number = scene.get("number", "?")
+        scene_prompt_preview = scene.get("prompt", "")[:50] if scene.get("prompt") else "None"
+        
+        logger.info(f"[Scene {scene_number} ID: {scene_id_str}] ===== RENDER SCENE STARTED =====")
+        logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Prompt preview: {scene_prompt_preview}...")
+        logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Project ID: {project_id}")
+        
         page = None
+        lock_file = None  # File handle used for profile locking (may remain None)
         try:
             # Ensure we're using the active profile (the one where user logged in)
             active_profile = self.profile_manager.get_active_profile()
@@ -63,32 +74,55 @@ class RenderManager:
             
             logger.info(f"Using active profile for rendering: {active_profile.name} ({active_profile.id})")
             logger.info(f"Profile path: {active_profile.profile_path}")
-            
-            # Validate profile path exists
+
+            # Validate base active profile path exists
             from pathlib import Path
-            profile_path = Path(active_profile.profile_path)
-            if not profile_path.exists():
-                raise Exception(f"Profile path does not exist: {profile_path}. Please check the profile configuration.")
-            
-            # Check if Default directory exists
+            base_profile_path = Path(active_profile.profile_path)
+            if not base_profile_path.exists():
+                raise Exception(f"Profile path does not exist: {base_profile_path}. Please check the profile configuration.")
+
+            # Create a worker-specific profile directory cloned from the active profile
+            # This allows parallel workers without sharing the same Chrome user-data-dir
+            worker_profiles_root = self.profile_manager.profiles_dir / "worker_profiles"
+            worker_profiles_root.mkdir(parents=True, exist_ok=True)
+            worker_profile_path = worker_profiles_root / f"{active_profile.id}_worker_{self.worker_id}"
+
+            if not worker_profile_path.exists():
+                logger.info(f"Creating worker-specific profile by copying active profile to: {worker_profile_path}")
+                try:
+                    copytree(base_profile_path, worker_profile_path, dirs_exist_ok=True)
+                except TypeError:
+                    # For older Python without dirs_exist_ok, ignore if already copied partially
+                    try:
+                        copytree(base_profile_path, worker_profile_path)
+                    except FileExistsError:
+                        logger.info(f"Worker profile already exists: {worker_profile_path}")
+                except Exception as copy_error:
+                    logger.warning(f"Could not clone active profile for worker: {copy_error}")
+                    # Fallback to using base profile directly (may limit parallelism)
+                    worker_profile_path = base_profile_path
+
+            profile_path = worker_profile_path
+            logger.info(f"Using worker-specific profile path: {profile_path}")
+
+            # Ensure Default directory exists in worker profile
             default_dir = profile_path / "Default"
             if not default_dir.exists():
-                logger.warning(f"Default directory does not exist in profile, creating it: {default_dir}")
+                logger.warning(f"Default directory does not exist in worker profile, creating it: {default_dir}")
                 try:
                     default_dir.mkdir(parents=True, exist_ok=True)
                 except Exception as default_error:
-                    raise Exception(f"Cannot create Default directory in profile: {default_error}")
-            
-            # CRITICAL FIX: Initialize browser with the active profile path directly
-            # This ensures we use the logged-in profile, not a worker-specific one without cookies
-            logger.info("Initializing browser manager with active profile path...")
+                    raise Exception(f"Cannot create Default directory in worker profile: {default_error}")
+
+            # Initialize browser with the worker-specific profile path
+            logger.info("Initializing browser manager with worker-specific profile path...")
             try:
                 await self.browser_manager.initialize_with_profile_path(profile_path)
-                logger.info("✓ Browser manager initialized with active profile")
+                logger.info("✓ Browser manager initialized with worker-specific profile")
             except Exception as init_error:
                 error_type = type(init_error).__name__
                 error_msg = str(init_error)
-                logger.error(f"✗ Failed to initialize browser with profile: {error_type}: {error_msg}")
+                logger.error(f"✗ Failed to initialize browser with worker profile: {error_type}: {error_msg}")
                 raise Exception(f"Profile loading failed: {error_type}: {error_msg}")
             
             # Create new page with retry logic for closed target errors
@@ -125,31 +159,36 @@ class RenderManager:
                             raise Exception(f"Context is not usable: {context_test_error}")
                     
                     page = await self.browser_manager.new_page()
-                    logger.info("Page created successfully")
+                    logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Page created successfully")
                     
                     # Verify page is not immediately closed
                     if page.is_closed():
-                        logger.warning("Page was immediately closed after creation")
+                        logger.warning(f"[Scene {scene_number} ID: {scene_id_str}] Page was immediately closed after creation")
                         if page_attempt < max_page_retries - 1:
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(2)  # Wait longer before retry
                             continue
                         else:
-                            raise Exception("Page keeps getting closed immediately after creation")
+                            raise Exception(f"[Scene {scene_number} ID: {scene_id_str}] Page keeps getting closed immediately after creation")
                     
                     break  # Success
                 except Exception as page_error:
+                    error_str = str(page_error)
                     if page_attempt < max_page_retries - 1:
-                        logger.warning(f"Page creation attempt {page_attempt + 1} failed: {page_error}, retrying...")
-                        await asyncio.sleep(2)
+                        logger.warning(f"[Scene {scene_number} ID: {scene_id_str}] Page creation attempt {page_attempt + 1}/{max_page_retries} failed: {error_str}, retrying...")
+                        await asyncio.sleep(3)  # Wait longer before retry
                     else:
-                        logger.error(f"Failed to create page after {max_page_retries} attempts: {page_error}")
-                        raise Exception(f"Cannot create page: {page_error}")
+                        logger.error(f"[Scene {scene_number} ID: {scene_id_str}] Failed to create page after {max_page_retries} attempts: {error_str}")
+                        raise Exception(f"[Scene {scene_number} ID: {scene_id_str}] Cannot create page: {error_str}")
             
             if not page:
                 raise Exception("Failed to create page after all retries")
             
+            # Get scene context for logging
+            scene_id_str = scene.get("id", "unknown")
+            scene_number = scene.get("number", "?")
+            
             # Navigate to Flow with retry logic for closed pages
-            logger.info(f"Navigating to Flow for scene {scene.get('id', 'unknown')}")
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Navigating to Flow...")
             nav_retries = 5  # Increased retries for page closure issues
             for nav_attempt in range(nav_retries):
                 try:
@@ -162,11 +201,11 @@ class RenderManager:
                             except:
                                 pass
                             page = await self.browser_manager.new_page()
-                            logger.info("Page recreated, waiting before retry...")
+                            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Page recreated, waiting before retry...")
                             await asyncio.sleep(2)  # Wait a bit longer for page to stabilize
                             continue
                         else:
-                            raise Exception("Page closed and cannot be recreated after all retries")
+                            raise Exception(f"[Scene {scene_number} ID: {scene_id_str}] Page closed and cannot be recreated after all retries")
                     
                     # Navigate to Flow
                     await self.flow_controller.navigate_to_flow(page)
@@ -259,32 +298,94 @@ class RenderManager:
                             logger.error(f"Navigation failed after {nav_retries} attempts: {nav_error}")
                             raise
             
-            # Ensure we're in a new project/editor view
-            logger.info("Ensuring we're in editor view...")
-            await self.flow_controller.ensure_new_project(page)
+            # Ensure we're in a new project/editor view. For automated scene rendering,
+            # we force creation of a fresh project so each scene has a clean editor.
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Ensuring we're in editor view (force_new=True for automated scene render)...")
+            await self.flow_controller.ensure_new_project(page, force_new=True)
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] ✓ Editor view ready for prompt injection")
             
-            # Configure render settings if provided
-            if render_settings:
+            # Get render settings from project if not provided
+            if not render_settings:
+                from app.models.project import Project
+                from app.core.database import SessionLocal
+                temp_db = SessionLocal()
+                try:
+                    project = temp_db.query(Project).filter(Project.id == project_id).first()
+                    if project:
+                        render_settings = project.get_render_settings()
+                        logger.info(f"Loaded render settings from project: {render_settings}")
+                    else:
+                        render_settings = {"aspect_ratio": "16:9", "videos_per_scene": 2, "model": "veo3.1-fast"}
+                        logger.info("Project not found, using default render settings")
+                finally:
+                    temp_db.close()
+            
+            # Configure render settings (if method exists)
+            if render_settings and hasattr(self.flow_controller, 'configure_render_settings'):
                 logger.info(f"Configuring render settings: {render_settings}")
-                await self.flow_controller.configure_render_settings(
-                    page,
-                    aspect_ratio=render_settings.get("aspect_ratio", "16:9"),
-                    videos_per_scene=render_settings.get("videos_per_scene", 2),
-                    model=render_settings.get("model", "veo3.1-fast")
-                )
-            else:
-                logger.info("No render settings provided, using defaults")
+                try:
+                    await self.flow_controller.configure_render_settings(
+                        page,
+                        aspect_ratio=render_settings.get("aspect_ratio", "16:9"),
+                        videos_per_scene=render_settings.get("videos_per_scene", 2),
+                        model=render_settings.get("model", "veo3.1-fast")
+                    )
+                except AttributeError:
+                    logger.warning("configure_render_settings not available, skipping render settings configuration")
+            elif render_settings:
+                logger.warning("Render settings provided but configure_render_settings method not available")
             
             # Build prompt with character consistency
             prompt = self._build_scene_prompt(scene, characters)
-            logger.info(f"Using prompt: {prompt[:100]}...")
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Using prompt ({len(prompt)} chars): {prompt[:100]}...")
             
             # Inject prompt
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Injecting prompt into Flow editor...")
             await self.flow_controller.inject_prompt(page, prompt)
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] ✓ Prompt injected")
+            
+            # Wait a bit after injecting prompt to ensure it's fully set
+            await asyncio.sleep(1)
+            
+            # Verify prompt is still in textarea before triggering
+            try:
+                textarea = page.locator('textarea, [contenteditable]').first
+                if await textarea.count() > 0:
+                    is_textarea = await textarea.get_attribute("tagName") == "TEXTAREA"
+                    if is_textarea:
+                        prompt_check = await textarea.input_value()
+                    else:
+                        prompt_check = await textarea.text_content()
+                    
+                    if not prompt_check or len(prompt_check.strip()) < len(prompt.strip()) * 0.8:
+                        logger.warning(f"⚠️ Prompt appears incomplete before triggering: {len(prompt_check) if prompt_check else 0} chars (expected ~{len(prompt)} chars)")
+                        logger.info("Re-injecting prompt...")
+                        await self.flow_controller.inject_prompt(page, prompt)
+                        await asyncio.sleep(1)
+                    else:
+                        logger.info(f"✓ Prompt verified before triggering: {len(prompt_check)} chars")
+            except Exception as verify_error:
+                logger.warning(f"Could not verify prompt before triggering: {verify_error}")
             
             # Trigger generation
-            logger.info("Triggering video generation...")
-            await self.flow_controller.trigger_generation(page)
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Triggering video generation...")
+            started = await self.flow_controller.trigger_generation(page)
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Generation trigger result: {started}")
+            
+            if not started:
+                logger.warning("Generation did not start; re-injecting prompt and retrying once...")
+                await asyncio.sleep(1)
+                await self.flow_controller.inject_prompt(page, prompt)
+                await asyncio.sleep(1)
+                started = await self.flow_controller.trigger_generation(page)
+                if not started:
+                    # Flow UI may still have started generation even if our
+                    # detection failed (UI changes frequently). Log a warning
+                    # but continue to wait_for_completion instead of failing.
+                    logger.warning(
+                        "Generation did not start after retry according to detectors; "
+                        "proceeding to wait_for_completion in case it actually started."
+                    )
             
             # Wait for completion
             logger.info("Waiting for render completion...")
@@ -309,11 +410,12 @@ class RenderManager:
                 page, output_path, scene_id
             )
             
-            logger.info(f"Scene rendered successfully: {video_path}")
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] Scene rendered successfully: {video_path}")
+            logger.info(f"[Scene {scene_number} ID: {scene_id_str}] ===== RENDER SCENE COMPLETED =====")
             return {
                 "success": True,
                 "video_path": video_path,
-                "scene_id": scene_id
+                "scene_id": scene_id_str
             }
             
         except Exception as e:
@@ -353,16 +455,23 @@ class RenderManager:
                     if tb_first_line and tb_first_line != error_msg:
                         error_full = f"{error_msg} ({tb_first_line[:100]})"
             
-            logger.error(f"Render error: {error_full}", exc_info=True)
+            logger.error(f"[Scene {scene_number} ID: {scene_id_str}] Render error: {error_full}", exc_info=True)
             
             # Return error (limit to 1000 chars to avoid serialization issues)
             return {
                 "success": False,
                 "error": error_full[:1000],
-                "scene_id": scene.get("id", ""),
+                "scene_id": scene_id_str,
                 "error_type": error_type
             }
         finally:
+            # Release profile lock
+            if lock_file:
+                try:
+                    fcntl.flock(lock_file, fcntl.LOCK_UN)
+                    lock_file.close()
+                except Exception:
+                    pass
             # Always close page and cleanup browser
             if page:
                 try:

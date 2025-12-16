@@ -8,12 +8,13 @@ from typing import Optional
 import asyncio
 import logging
 from pathlib import Path
+from shutil import copytree
 from app.services.browser_manager import BrowserManager
 from app.services.flow_controller import FlowController
 from app.services.profile_manager import ProfileManager
 from app.services.guided_login import GuidedLoginService
 from app.core.database import SessionLocal
-from app.config import config_manager, settings
+from app.config import config_manager, settings, IMAGES_PATH
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -60,17 +61,38 @@ async def get_setup_status() -> SetupStatusResponse:
     
     if profile_exists:
         try:
-            # FIX: Use active profile path directly, not initialize() which might use worker profile
+            # FIX: Use a cloned copy of the active profile to avoid conflicts with render workers
             profile_manager = ProfileManager()
             active_profile = profile_manager.get_active_profile()
             
             if active_profile:
-                # Use active profile path directly
-                profile_path = Path(active_profile.profile_path)
-                logger.info(f"Checking login status with active profile: {active_profile.name}")
+                # Use active profile path as base
+                base_profile_path = Path(active_profile.profile_path)
+                logger.info(f"Checking login status with active profile: {active_profile.name} ({base_profile_path})")
+                
+                # Clone active profile into a setup-specific directory to avoid interfering
+                # with render workers or other browser sessions
+                worker_profiles_root = profile_manager.profiles_dir / "worker_profiles"
+                worker_profiles_root.mkdir(parents=True, exist_ok=True)
+                setup_profile_path = worker_profiles_root / f"{active_profile.id}_setup_status"
+                
+                if not setup_profile_path.exists():
+                    logger.info(f"Creating setup-specific profile by copying active profile to: {setup_profile_path}")
+                    try:
+                        copytree(base_profile_path, setup_profile_path, dirs_exist_ok=True)
+                    except TypeError:
+                        # Older Python fallback without dirs_exist_ok
+                        try:
+                            copytree(base_profile_path, setup_profile_path)
+                        except FileExistsError:
+                            logger.info(f"Setup profile already exists: {setup_profile_path}")
+                    except Exception as copy_error:
+                        logger.warning(f"Could not clone active profile for setup status: {copy_error}")
+                        # Fallback: use base profile directly (may have more conflicts)
+                        setup_profile_path = base_profile_path
                 
                 browser_manager = BrowserManager()
-                await browser_manager.initialize_with_profile_path(profile_path)
+                await browser_manager.initialize_with_profile_path(setup_profile_path)
                 page = await browser_manager.new_page()
             else:
                 # Fallback to default initialization
@@ -169,9 +191,9 @@ async def test_connection(background_tasks: BackgroundTasks) -> TestConnectionRe
             
             # Take screenshot for debugging
             from datetime import datetime
-            logs_dir = Path(__file__).parent.parent.parent.parent / "logs"
-            logs_dir.mkdir(parents=True, exist_ok=True)
-            screenshot_path = str(logs_dir / f"flow_connection_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+            images_dir = Path(IMAGES_PATH)
+            images_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = str(images_dir / f"flow_connection_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
             await page.screenshot(path=screenshot_path)
             
             if is_logged_in:
@@ -192,9 +214,9 @@ async def test_connection(background_tasks: BackgroundTasks) -> TestConnectionRe
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
             from datetime import datetime
-            logs_dir = Path(__file__).parent.parent.parent.parent / "logs"
-            logs_dir.mkdir(parents=True, exist_ok=True)
-            screenshot_path = str(logs_dir / f"flow_connection_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+            images_dir = Path(IMAGES_PATH)
+            images_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = str(images_dir / f"flow_connection_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
             try:
                 await page.screenshot(path=screenshot_path)
             except:

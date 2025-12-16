@@ -3,7 +3,7 @@ Flow Controller Service - Handles Google Flow UI automation
 """
 
 from playwright.async_api import Page
-from app.config import config_manager, settings, FLOW_URL, FLOW_SELECTORS, POLLING_INTERVAL_MS
+from app.config import config_manager, settings, FLOW_URL, FLOW_SELECTORS, POLLING_INTERVAL_MS, IMAGES_PATH
 import asyncio
 import logging
 import os
@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_screenshot_path(filename: str) -> str:
-    """Get path for screenshot in project logs directory"""
-    # Use logs directory in backend folder
-    logs_dir = Path(__file__).parent.parent.parent / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    return str(logs_dir / filename)
+    """Get path for screenshot in images directory"""
+    # Use images directory from config
+    images_dir = Path(IMAGES_PATH)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    return str(images_dir / filename)
 
 
 class FlowController:
@@ -975,181 +975,17 @@ class FlowController:
             logger.debug(f"Page verification error: {e}")
             return False
     
-    async def configure_render_settings(
-        self,
-        page: Page,
-        aspect_ratio: str = "16:9",
-        videos_per_scene: int = 2,
-        model: str = "veo3.1-fast"
-    ) -> None:
-        """
-        Configure render settings in Flow UI before rendering
-        
+    async def ensure_new_project(self, page: Page, force_new: bool = False) -> None:
+        """Ensure we're in a new project/editor view by clicking 'New project' if needed.
+
         Args:
-            page: Playwright page object
-            aspect_ratio: "16:9" or "9:16"
-            videos_per_scene: 1, 2, 3, or 4
-            model: Model name (e.g., "veo3.1-fast")
+            page: Playwright page instance.
+            force_new: When True, always try to create a fresh project even if
+                       we're already in an editor view. This is useful for
+                       automated scene rendering so each scene gets a clean
+                       editor without leftover prompts/state from previous runs.
         """
-        logger.info(f"Configuring render settings: aspect_ratio={aspect_ratio}, videos_per_scene={videos_per_scene}, model={model}")
-        
-        try:
-            # Look for settings icon/button (usually in top right)
-            # Try various selectors for settings icon
-            settings_selectors = [
-                'button[aria-label*="Settings"]',
-                'button[aria-label*="settings"]',
-                'button[aria-label*="Cài đặt"]',
-                'button[class*="settings"]',
-                'button[class*="Settings"]',
-                'button:has(svg[class*="settings"])',
-                'button:has(svg[class*="Settings"])',
-                '[data-testid*="settings"]',
-                'button:has-text("Settings")',
-            ]
-            
-            settings_button = None
-            for selector in settings_selectors:
-                try:
-                    elements = await page.locator(selector).all()
-                    for elem in elements:
-                        if await elem.is_visible():
-                            settings_button = elem
-                            logger.info(f"Found settings button with selector: {selector}")
-                            break
-                    if settings_button:
-                        break
-                except:
-                    continue
-            
-            if not settings_button:
-                logger.warning("Settings button not found - using default settings")
-                return
-            
-            # Click settings button to open settings dialog
-            await settings_button.click()
-            await asyncio.sleep(1)  # Wait for dialog to open
-            
-            # Configure aspect ratio
-            aspect_label_map = {
-                "16:9": ["Khổ ngang (16:9)", "Landscape (16:9)", "16:9"],
-                "9:16": ["Khổ dọc (9:16)", "Portrait (9:16)", "9:16"]
-            }
-            
-            aspect_labels = aspect_label_map.get(aspect_ratio, aspect_label_map["16:9"])
-            aspect_set = False
-            
-            for label in aspect_labels:
-                try:
-                    # Look for aspect ratio dropdown
-                    aspect_selectors = [
-                        f'text="{label}"',
-                        f'button:has-text("{label}")',
-                        f'[role="option"]:has-text("{label}")',
-                        f'div:has-text("{label}")',
-                    ]
-                    
-                    for selector in aspect_selectors:
-                        elem = page.locator(selector).first
-                        if await elem.count() > 0 and await elem.is_visible():
-                            await elem.click()
-                            logger.info(f"Set aspect ratio to {aspect_ratio} using label: {label}")
-                            aspect_set = True
-                            await asyncio.sleep(0.5)
-                            break
-                    
-                    if aspect_set:
-                        break
-                except:
-                    continue
-            
-            # Configure videos per scene
-            try:
-                videos_labels = [str(videos_per_scene), f"{videos_per_scene}"]
-                for label in videos_labels:
-                    try:
-                        video_selectors = [
-                            f'text="{label}"',
-                            f'button:has-text("{label}")',
-                            f'[role="option"]:has-text("{label}")',
-                            f'div:has-text("{label}")',
-                        ]
-                        
-                        for selector in video_selectors:
-                            elem = page.locator(selector).first
-                            if await elem.count() > 0 and await elem.is_visible():
-                                await elem.click()
-                                logger.info(f"Set videos per scene to {videos_per_scene}")
-                                await asyncio.sleep(0.5)
-                                break
-                    except:
-                        continue
-            except Exception as e:
-                logger.warning(f"Failed to set videos per scene: {e}")
-            
-            # Configure model
-            model_label_map = {
-                "veo3.1-fast": ["Veo 3.1 - Fast", "Veo3.1-fast"],
-                "veo3.1-standard": ["Veo 3.1 - Standard", "Veo3.1-standard"],
-            }
-            
-            model_labels = model_label_map.get(model, model_label_map["veo3.1-fast"])
-            model_set = False
-            
-            for label in model_labels:
-                try:
-                    model_selectors = [
-                        f'text="{label}"',
-                        f'button:has-text("{label}")',
-                        f'[role="option"]:has-text("{label}")',
-                        f'div:has-text("{label}")',
-                    ]
-                    
-                    for selector in model_selectors:
-                        elem = page.locator(selector).first
-                        if await elem.count() > 0 and await elem.is_visible():
-                            await elem.click()
-                            logger.info(f"Set model to {model} using label: {label}")
-                            model_set = True
-                            await asyncio.sleep(0.5)
-                            break
-                    
-                    if model_set:
-                        break
-                except:
-                    continue
-            
-            # Close settings dialog if needed (click outside or close button)
-            try:
-                close_selectors = [
-                    'button[aria-label*="Close"]',
-                    'button[aria-label*="close"]',
-                    'button:has(svg[class*="close"])',
-                    'button:has(svg[class*="Close"])',
-                ]
-                
-                for selector in close_selectors:
-                    try:
-                        close_btn = page.locator(selector).first
-                        if await close_btn.count() > 0 and await close_btn.is_visible():
-                            await close_btn.click()
-                            logger.info("Closed settings dialog")
-                            await asyncio.sleep(0.5)
-                            break
-                    except:
-                        continue
-            except:
-                pass  # Dialog might close automatically or doesn't need closing
-            
-            logger.info("Render settings configured successfully")
-            
-        except Exception as e:
-            logger.warning(f"Failed to configure render settings: {e}. Using defaults.")
-            # Don't fail the render if settings can't be configured
-    
-    async def ensure_new_project(self, page: Page) -> None:
-        """Ensure we're in a new project/editor view by clicking 'New project' if needed"""
-        logger.info("Checking if we need to create a new project...")
+        logger.info(f"[ensure_new_project] Checking if we need to create a new project (force_new={force_new})...")
         
         # Wait a bit for page to settle
         await asyncio.sleep(2)
@@ -1177,15 +1013,53 @@ class FlowController:
                     continue
             
             if in_editor:
-                logger.info(f"✓ Already in editor view (found visible inputs: {visible_inputs}), no need to create new project")
-                # Verify we can actually interact with the input
-                try:
-                    test_input = page.locator(visible_inputs[0]).first
-                    await test_input.focus()
-                    logger.info("✓ Editor input is interactive - ready for prompt injection")
-                    return
-                except Exception as verify_error:
-                    logger.warning(f"Editor input found but not interactive: {verify_error} - will try to click new project anyway")
+                if not force_new:
+                    logger.info(f"✓ Already in editor view (found visible inputs: {visible_inputs}), no need to create new project")
+                    # Verify we can actually interact with the input
+                    try:
+                        test_input = page.locator(visible_inputs[0]).first
+                        await test_input.focus()
+                        logger.info("✓ Editor input is interactive - ready for prompt injection")
+                        return
+                    except Exception as verify_error:
+                        logger.warning(f"Editor input found but not interactive: {verify_error} - will try to click new project anyway")
+                else:
+                    logger.info(f"Already in editor view (found visible inputs: {visible_inputs}), but force_new=True - navigating to gallery to create a fresh project")
+                    # When force_new=True and we're in editor, we need to navigate back to gallery first
+                    # Try to find and click a "Home" or "Gallery" link/button
+                    try:
+                        home_selectors = [
+                            'a[href*="/tools/flow"]',
+                            'a:has-text("Home")',
+                            'a:has-text("Gallery")',
+                            'button:has-text("Home")',
+                            'button:has-text("Gallery")',
+                            '[aria-label*="Home"]',
+                            '[aria-label*="Gallery"]',
+                        ]
+                        
+                        navigated_to_gallery = False
+                        for home_selector in home_selectors:
+                            try:
+                                home_button = page.locator(home_selector).first
+                                if await home_button.count() > 0 and await home_button.is_visible():
+                                    logger.info(f"Found home/gallery button: {home_selector}, clicking to navigate to gallery...")
+                                    await home_button.click()
+                                    await asyncio.sleep(3)  # Wait for navigation
+                                    navigated_to_gallery = True
+                                    break
+                            except:
+                                continue
+                        
+                        if not navigated_to_gallery:
+                            # Fallback: navigate directly to Flow URL to get to gallery
+                            logger.info("Home button not found, navigating directly to Flow URL to get gallery view...")
+                            flow_url = config_manager.get("flow.url", "https://labs.google/fx/tools/flow/")
+                            await page.goto(flow_url, wait_until="domcontentloaded", timeout=30000)
+                            await asyncio.sleep(3)  # Wait for page to load
+                            logger.info("Navigated to Flow URL, should be in gallery view now")
+                    except Exception as nav_error:
+                        logger.warning(f"Failed to navigate to gallery from editor: {nav_error}, will try to proceed anyway")
         except Exception as editor_check_error:
             logger.debug(f"Error checking editor state: {editor_check_error}")
         
@@ -1773,20 +1647,34 @@ class FlowController:
                             except:
                                 pass
                     
-                    # Type prompt (simulate human typing)
+                    # Fill prompt directly (faster and more reliable than typing character-by-character)
+                    # Use fill() first for speed, fallback to type() only if fill() doesn't work
                     try:
-                        await input_element.type(prompt, delay=50)
-                    except:
-                        # Fallback to fill if type doesn't work
+                        # Try fill() first - it's much faster and more reliable
+                        await input_element.fill(prompt)
+                        logger.debug("Used fill() method for prompt injection")
+                    except Exception as fill_error:
+                        logger.debug(f"fill() failed: {fill_error}, trying type()...")
+                        # Fallback to type() if fill() doesn't work (for React controlled inputs)
                         try:
-                            await input_element.fill(prompt)
-                        except:
+                            await input_element.type(prompt, delay=10)  # Reduced delay from 50ms to 10ms
+                            logger.debug("Used type() method for prompt injection")
+                        except Exception as type_error:
+                            logger.debug(f"type() failed: {type_error}, trying JavaScript...")
+                            # Fallback to JavaScript direct value setting
                             try:
                                 await input_element.evaluate(f"el => el.value = {repr(prompt)}")
-                            except:
+                                # Trigger input event for React
+                                await input_element.evaluate("el => el.dispatchEvent(new Event('input', { bubbles: true }))")
+                                logger.debug("Used JavaScript value assignment")
+                            except Exception as js_error:
+                                logger.debug(f"JavaScript value failed: {js_error}, trying innerText...")
                                 try:
                                     await input_element.evaluate(f"el => el.innerText = {repr(prompt)}")
-                                except:
+                                    await input_element.evaluate("el => el.dispatchEvent(new Event('input', { bubbles: true }))")
+                                    logger.debug("Used JavaScript innerText assignment")
+                                except Exception as inner_error:
+                                    logger.error(f"All text input methods failed: fill={fill_error}, type={type_error}, js={js_error}, inner={inner_error}")
                                     raise Exception("All text input methods failed")
                     
                     await asyncio.sleep(0.5)
@@ -1809,11 +1697,27 @@ class FlowController:
                     
                     if value and (prompt[:20] in str(value) or len(str(value)) > len(prompt) * 0.8):
                         logger.info(f"✓ Prompt injected successfully (verified: {len(str(value))} chars)")
-                        await asyncio.sleep(0.5)
+                        # Wait longer to ensure React has processed the input
+                        await asyncio.sleep(1.5)
                         return
                     else:
                         logger.warning(f"Prompt verification failed. Expected ~{len(prompt)} chars, got: {len(str(value)) if value else 0}")
                         logger.debug(f"Value preview: {str(value)[:50] if value else 'None'}")
+                        # Try one more time with fill
+                        try:
+                            await input_element.fill(prompt)
+                            await asyncio.sleep(1)
+                            # Verify again
+                            if is_textarea:
+                                value = await input_element.input_value()
+                            else:
+                                value = await input_element.text_content()
+                            if value and len(str(value)) > len(prompt) * 0.8:
+                                logger.info(f"✓ Prompt re-injected successfully (verified: {len(str(value))} chars)")
+                                await asyncio.sleep(1.5)
+                                return
+                        except:
+                            pass
             except Exception as e:
                 logger.debug(f"Selector {selector} failed: {e}")
                 continue
@@ -2079,8 +1983,12 @@ class FlowController:
             error_msg += f" Check screenshot: {screenshot_path}"
         raise Exception(error_msg)
     
-    async def trigger_generation(self, page: Page) -> None:
-        """Click the generate button to start video generation"""
+    async def trigger_generation(self, page: Page) -> bool:
+        """Click the generate button to start video generation.
+
+        Returns:
+            bool: True if generation likely started, False otherwise.
+        """
         # Get selector from config and split by comma
         config_selector = FLOW_SELECTORS.get("generateButton", "")
         selectors = []
@@ -2132,6 +2040,7 @@ class FlowController:
         
         logger.info(f"Trying {len(selectors)} button selectors...")
         
+        # FIRST: Try to find and click the generate button (more reliable than Enter key)
         for i, selector in enumerate(selectors):
             try:
                 logger.debug(f"Trying selector {i+1}/{len(selectors)}: {selector}")
@@ -2169,35 +2078,64 @@ class FlowController:
                         except:
                             pass
                         
-                        logger.info(f"Clicking button with text: '{button_text}' (selector: {selector})")
+                        logger.info(f"Found generate button: '{button_text}' (selector: {selector})")
                         
-                        # Verify prompt is in textarea before clicking
+                        # CRITICAL: Verify prompt is in textarea before clicking
                         try:
                             textarea = page.locator('textarea, [contenteditable]').first
                             if await textarea.count() > 0:
-                                prompt_value = await textarea.input_value() if await textarea.get_attribute("tagName") == "TEXTAREA" else await textarea.text_content()
+                                is_textarea = await textarea.get_attribute("tagName") == "TEXTAREA"
+                                if is_textarea:
+                                    prompt_value = await textarea.input_value()
+                                else:
+                                    prompt_value = await textarea.text_content()
+                                
                                 if not prompt_value or len(prompt_value.strip()) < 5:
                                     logger.warning(f"⚠️ Textarea appears empty before clicking generate button!")
+                                    logger.warning("Re-injecting prompt before clicking button...")
+                                    # Get the original prompt from the page context if possible
+                                    # For now, we'll skip this button and try others
+                                    continue
                                 else:
                                     logger.info(f"✓ Verified prompt in textarea: {len(prompt_value)} chars")
                         except Exception as prompt_check_error:
                             logger.warning(f"Could not verify prompt in textarea: {prompt_check_error}")
                         
+                        # Scroll button into view and click
+                        await button.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.3)
                         await button.click(timeout=5000)
                         logger.info("✓ Generate button clicked successfully")
-                        await asyncio.sleep(1)  # Brief wait for UI to respond
+                        await asyncio.sleep(2)  # Wait longer for UI to respond
+                        
+                        # Verify prompt is still there after clicking (should be cleared if submission worked)
+                        try:
+                            if await textarea.count() > 0:
+                                if is_textarea:
+                                    prompt_after = await textarea.input_value()
+                                else:
+                                    prompt_after = await textarea.text_content()
+                                
+                                # If prompt is cleared, that's actually good - it means submission worked
+                                if not prompt_after or len(prompt_after.strip()) < 5:
+                                    logger.info("✓ Prompt cleared after button click - submission successful")
+                                else:
+                                    logger.info(f"Prompt still present after click ({len(prompt_after)} chars) - may need to wait")
+                        except:
+                            pass
                         
                         # Verify rendering started
-                        await self._wait_for_render_start(page)
-                        return
+                        started = await self._wait_for_render_start(page)
+                        return bool(started)
                     else:
                         logger.debug(f"Button found but not visible/enabled: visible={is_visible}, enabled={is_enabled}")
             except Exception as e:
                 logger.debug(f"Selector '{selector}' failed: {e}")
                 continue
         
-        # Try Enter key first (simpler and more reliable - user suggested this)
-        logger.info("Trying Enter key to submit prompt (user suggested method)...")
+        # FALLBACK: Try Enter key only if button click didn't work
+        # Note: Enter key is less reliable - it can clear the prompt without submitting
+        logger.info("Button click didn't work, trying Enter key as fallback...")
         try:
             textarea = page.locator('textarea, [contenteditable]').first
             if await textarea.count() > 0:
@@ -2211,26 +2149,37 @@ class FlowController:
                 if prompt_value and len(prompt_value.strip()) >= 5:
                     logger.info(f"✓ Prompt verified in textarea ({len(prompt_value)} chars), pressing Enter...")
                     await textarea.focus()
-                    await asyncio.sleep(0.5)  # Wait a bit longer for focus
+                    await asyncio.sleep(0.5)  # Wait for focus
                     
-                    # Try pressing Enter
+                    # Press Enter
                     await textarea.press("Enter")
                     logger.info("✓ Enter key pressed")
-                    await asyncio.sleep(1.5)  # Wait for UI to respond
+                    await asyncio.sleep(2)  # Wait longer for UI to respond
                     
-                    # Verify prompt is still there after Enter (should be)
+                    # CRITICAL: Verify prompt is still there after Enter
+                    # If prompt was cleared, Enter might have worked (or might have failed)
                     if is_textarea:
                         prompt_after = await textarea.input_value()
                     else:
                         prompt_after = await textarea.text_content()
+                    
                     logger.info(f"Prompt after Enter: {len(prompt_after) if prompt_after else 0} chars")
                     
-                    await self._wait_for_render_start(page)
-                    return
+                    # Check if prompt was cleared - if so, assume Enter worked
+                    if not prompt_after or len(prompt_after.strip()) < 5:
+                        logger.info("Prompt cleared after Enter - assuming submission worked")
+                        started = await self._wait_for_render_start(page)
+                        return bool(started)
+                    else:
+                        logger.warning(f"⚠️ Prompt still present after Enter ({len(prompt_after)} chars) - Enter may not have worked")
+                        # Prompt is still there - Enter might not have worked
+                        # But we'll proceed anyway and let wait_for_render_start handle it
+                        await self._wait_for_render_start(page)
+                        return
                 else:
                     logger.warning(f"⚠️ Textarea is empty before pressing Enter! Prompt value: '{prompt_value[:50] if prompt_value else 'None'}'")
         except Exception as enter_error:
-            logger.warning(f"Enter key method failed: {enter_error}, trying button click instead...")
+            logger.warning(f"Enter key method failed: {enter_error}")
         
         # JavaScript fallback: Try to find and click arrow button (circular button with right arrow)
         logger.info("Trying JavaScript fallback to find arrow/generate button...")
@@ -2593,7 +2542,7 @@ class FlowController:
                 if skip_error_detection:
                     logger.debug(f"Early check (elapsed: {elapsed_ms:.0f}ms) - skipping error detection, only checking for video")
                 
-                # Check for video element - try multiple selectors
+                # Check for video element - try multiple selectors and methods
                 video_selectors = [
                     "video",
                     "video[src]",
@@ -2602,27 +2551,122 @@ class FlowController:
                     "iframe[src*='video']",
                 ]
                 
+                # First, try JavaScript-based detection (more reliable)
+                try:
+                    video_info = await page.evaluate("""
+                        () => {
+                            const videos = document.querySelectorAll('video');
+                            const results = [];
+                            
+                            for (const video of videos) {
+                                if (!video.offsetParent) continue; // Skip hidden videos
+                                
+                                const src = video.src || video.currentSrc || '';
+                                const readyState = video.readyState || 0;
+                                const duration = video.duration || 0;
+                                const paused = video.paused;
+                                
+                                // Check if video has content (readyState >= 2 means it has loaded metadata)
+                                if (readyState >= 2 || duration > 0 || src) {
+                                    results.push({
+                                        hasSrc: !!src,
+                                        src: src,
+                                        readyState: readyState,
+                                        duration: duration,
+                                        paused: paused,
+                                        visible: video.offsetParent !== null,
+                                        hasPoster: !!video.poster,
+                                        poster: video.poster || ''
+                                    });
+                                }
+                            }
+                            
+                            // Also check for video containers/players
+                            const videoContainers = document.querySelectorAll('[class*="video"], [class*="Video"], [class*="player"], [class*="Player"]');
+                            for (const container of videoContainers) {
+                                if (container.offsetParent && container.querySelector('video')) {
+                                    results.push({
+                                        hasContainer: true,
+                                        visible: true
+                                    });
+                                }
+                            }
+                            
+                            return results;
+                        }
+                    """)
+                    
+                    if video_info and len(video_info) > 0:
+                        logger.debug(f"JavaScript found {len(video_info)} video element(s)")
+                        for i, info in enumerate(video_info):
+                            logger.debug(f"Video {i+1}: src={bool(info.get('src'))}, readyState={info.get('readyState')}, duration={info.get('duration')}, visible={info.get('visible')}")
+                            
+                            # If video has src or is ready, consider it complete
+                            if info.get('src') or info.get('readyState', 0) >= 2 or info.get('duration', 0) > 0:
+                                video_src = info.get('src') or info.get('poster') or ''
+                                if video_src:
+                                    logger.info(f"Video generation completed (JavaScript detection: src={video_src[:50]}...)")
+                                    return {"status": "completed", "video_url": video_src}
+                                elif info.get('hasContainer') or info.get('visible'):
+                                    # Video element exists and is visible - might be loading, wait a bit more
+                                    logger.info("Video element detected but no src yet - waiting for video to load...")
+                                    await asyncio.sleep(2)
+                                    # Re-check after waiting
+                                    video_src = await page.evaluate("""
+                                        () => {
+                                            const video = document.querySelector('video');
+                                            if (video && video.offsetParent) {
+                                                return video.src || video.currentSrc || '';
+                                            }
+                                            return '';
+                                        }
+                                    """)
+                                    if video_src:
+                                        logger.info(f"Video src loaded after wait: {video_src[:50]}...")
+                                        return {"status": "completed", "video_url": video_src}
+                except Exception as js_error:
+                    logger.debug(f"JavaScript video detection failed: {js_error}")
+                
+                # Fallback: Try Playwright selectors
                 for video_selector in video_selectors:
                     try:
                         video = page.locator(video_selector).first
                         if await video.count() > 0:
+                            # Check if video is visible
+                            is_visible = await video.is_visible()
+                            if not is_visible:
+                                continue
+                            
                             # Check if video has src attribute
                             src = await video.get_attribute("src")
                             if src and (src.startswith("http") or src.startswith("blob:") or src.startswith("data:")):
                                 logger.info(f"Video generation completed (found via selector: {video_selector})")
                                 return {"status": "completed", "video_url": src}
                             
-                            # Also check if video element is visible (might have src in different attribute)
-                            if await video.is_visible():
-                                # Try to get video URL from different attributes
-                                for attr in ["src", "data-src", "data-url", "poster"]:
-                                    try:
-                                        attr_value = await video.get_attribute(attr)
-                                        if attr_value and (attr_value.startswith("http") or attr_value.startswith("blob:")):
-                                            logger.info(f"Video generation completed (found URL in {attr} attribute)")
-                                            return {"status": "completed", "video_url": attr_value}
-                                    except:
-                                        continue
+                            # Check video readyState via JavaScript
+                            try:
+                                ready_state = await video.evaluate("el => el.readyState || 0")
+                                duration = await video.evaluate("el => el.duration || 0")
+                                if ready_state >= 2 or duration > 0:
+                                    # Video has loaded metadata or has duration
+                                    current_src = await video.evaluate("el => el.src || el.currentSrc || ''")
+                                    if current_src:
+                                        logger.info(f"Video generation completed (readyState={ready_state}, duration={duration})")
+                                        return {"status": "completed", "video_url": current_src}
+                                    else:
+                                        logger.info(f"Video element ready (readyState={ready_state}, duration={duration}) but no src - may be loading")
+                            except:
+                                pass
+                            
+                            # Try to get video URL from different attributes
+                            for attr in ["src", "data-src", "data-url", "poster", "currentSrc"]:
+                                try:
+                                    attr_value = await video.get_attribute(attr) if attr != "currentSrc" else await video.evaluate("el => el.currentSrc || ''")
+                                    if attr_value and (attr_value.startswith("http") or attr_value.startswith("blob:") or attr_value.startswith("data:")):
+                                        logger.info(f"Video generation completed (found URL in {attr} attribute)")
+                                        return {"status": "completed", "video_url": attr_value}
+                                except:
+                                    continue
                     except:
                         continue
                 
@@ -2637,6 +2681,45 @@ class FlowController:
                     '[class*="Download"]',
                 ]
                 
+                # Also check via JavaScript for download buttons
+                try:
+                    download_buttons = await page.evaluate("""
+                        () => {
+                            const buttons = Array.from(document.querySelectorAll('button, a'));
+                            const results = [];
+                            
+                            for (const btn of buttons) {
+                                if (!btn.offsetParent) continue;
+                                
+                                const text = (btn.textContent || '').toLowerCase();
+                                const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+                                const className = (btn.className || '').toLowerCase();
+                                const hasDownload = btn.hasAttribute('download') || 
+                                                   text.includes('download') || 
+                                                   text.includes('tải xuống') ||
+                                                   ariaLabel.includes('download') ||
+                                                   className.includes('download');
+                                
+                                if (hasDownload) {
+                                    results.push({
+                                        text: btn.textContent?.trim() || '',
+                                        visible: btn.offsetParent !== null,
+                                        hasDownloadAttr: btn.hasAttribute('download')
+                                    });
+                                }
+                            }
+                            
+                            return results;
+                        }
+                    """)
+                    
+                    if download_buttons and len(download_buttons) > 0:
+                        logger.info(f"Download button detected via JavaScript: {download_buttons[0].get('text', '')}")
+                        return {"status": "completed", "has_download": True}
+                except Exception as js_dl_error:
+                    logger.debug(f"JavaScript download button detection failed: {js_dl_error}")
+                
+                # Fallback: Try Playwright selectors
                 for download_selector in download_selectors:
                     try:
                         download_btn = page.locator(download_selector).first
@@ -2710,6 +2793,32 @@ class FlowController:
                             if error_text and len(error_text.strip()) > 10:  # Must be substantial message
                                 error_found = True
                                 logger.warning(f"Specific error message found: {error_text[:100]}")
+                                
+                                # Try to close Google account error popup if it's that type of error
+                                if "Rất tiếc" in error_text or "Unfortunately, an error occurred" in error_text:
+                                    logger.info("Attempting to close Google account error popup...")
+                                    try:
+                                        close_selectors = [
+                                            'button:has-text("Đóng")',
+                                            'button:has-text("Close")',
+                                            '[aria-label*="Close"]',
+                                            '[aria-label*="Đóng"]',
+                                            'button[class*="close"]',
+                                            'button[class*="Close"]',
+                                        ]
+                                        for close_sel in close_selectors:
+                                            try:
+                                                close_btn = page.locator(close_sel).first
+                                                if await close_btn.count() > 0 and await close_btn.is_visible():
+                                                    await close_btn.click()
+                                                    await asyncio.sleep(1)
+                                                    logger.info("✓ Closed error popup")
+                                                    break
+                                            except:
+                                                continue
+                                    except Exception as close_error:
+                                        logger.debug(f"Could not close error popup: {close_error}")
+                                
                                 break
                     except:
                         continue

@@ -180,6 +180,11 @@ export default function HomePage() {
                     {project.name}
                   </CardTitle>
                   <CardDescription>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {project.id}
+                      </span>
+                    </div>
                     {project.description || 'No description'}
                   </CardDescription>
                 </CardHeader>

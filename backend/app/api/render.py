@@ -106,17 +106,29 @@ async def render_all_scenes(
         render_settings = project.get_render_settings()
         logger.info(f"Using render settings: {render_settings}")
         
-        # Queue render tasks for all scenes
+        # Queue render tasks for all scenes with delays to avoid browser conflicts
+        # IMPORTANT: Each scene needs its own browser instance, so we space them out
         task_ids = []
-        for scene in scenes:
+        for idx, scene in enumerate(scenes):
             # Update scene status to pending (in case it wasn't)
             scene.status = "pending"
             db.commit()
             
-            # Queue render task
-            task = render_scene_task.delay(scene.id, project_id)
+            # Queue render task with increasing delays between tasks
+            # Start with 10 seconds delay for scene 1 (idx=0), then 15s, 20s, etc.
+            # This ensures each browser instance has time to initialize properly
+            if idx == 0:
+                # First scene: start immediately but with a small delay to ensure DB commit
+                countdown = 2  # 2 second delay to ensure DB is committed
+                task = render_scene_task.apply_async(args=[scene.id, project_id], countdown=countdown)
+            else:
+                # Subsequent scenes: longer delays (10s + 10s per scene)
+                # This prevents browser conflicts and ensures each scene gets a fresh browser instance
+                countdown = 10 + (idx * 10)  # 10s, 20s, 30s, etc.
+                task = render_scene_task.apply_async(args=[scene.id, project_id], countdown=countdown)
+            
             task_ids.append(task.id)
-            logger.info(f"Queued render task {task.id} for scene {scene.id} (Scene {scene.number})")
+            logger.info(f"Queued render task {task.id} for scene {scene.id} (Scene {scene.number}) with {countdown}s delay")
         
         return {
             "task_ids": task_ids,

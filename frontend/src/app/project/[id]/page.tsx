@@ -8,11 +8,14 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Loader2, Plus, Play, Video, Trash2, Settings, Film } from 'lucide-react'
-import { useState } from 'react'
+import { Loader2, Plus, Play, Video, Trash2, Settings, Film, FileText, Wand2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { RenderSettingsDialog } from '@/components/RenderSettingsDialog'
 import { useQueryClient } from '@tanstack/react-query'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { ScriptGenerationForm } from '@/components/ScriptGenerationForm'
+import { useScript } from '@/hooks/useScript'
 
 export default function ProjectPage() {
   const params = useParams()
@@ -25,6 +28,28 @@ export default function ProjectPage() {
   const [scenePrompt, setScenePrompt] = useState('')
   const [sceneNumber, setSceneNumber] = useState(1)
   const [showSettingsDialog, setShowSettingsDialog] = useState(false)
+  
+  const { data: script } = useScript(projectId)
+  const [activeTab, setActiveTab] = useState('render') // Default to render tab
+  
+  // Switch to render tab when script is generated
+  useEffect(() => {
+    if (script) {
+      setActiveTab('render')
+    }
+  }, [script])
+
+  // Auto-refresh scenes every 3 seconds if there are any scenes with rendering or pending status
+  useEffect(() => {
+    const hasActiveScenes = scenes.some(s => s.status === 'rendering' || s.status === 'pending')
+    if (!hasActiveScenes) return
+
+    const interval = setInterval(() => {
+      queryClient.refetchQueries({ queryKey: ['scenes', projectId] })
+    }, 3000) // Poll every 3 seconds
+
+    return () => clearInterval(interval)
+  }, [scenes, projectId, queryClient])
 
   // Get render settings with defaults
   const renderSettings = project?.render_settings || {
@@ -44,6 +69,12 @@ export default function ProjectPage() {
     const nextNumber = getNextSceneNumber()
     setSceneNumber(nextNumber)
     setShowSceneForm(true)
+  }
+
+  // Helper function to trigger status polling
+  const startStatusPolling = () => {
+    // Trigger immediate refresh - useEffect handles ongoing polling
+    queryClient.refetchQueries({ queryKey: ['scenes', projectId] })
   }
 
   const handleCreateScene = async (e: React.FormEvent) => {
@@ -80,6 +111,8 @@ export default function ProjectPage() {
       console.log(`Starting render for scene ${sceneId} in project ${projectId}`)
       await renderScene({ sceneId, projectId })
       console.log('Render request sent successfully')
+      // Trigger immediate refresh and start polling
+      startStatusPolling()
     } catch (error: any) {
       console.error('Failed to start render:', error)
       alert(`Failed to start render: ${error.message || 'Unknown error'}\n\nCheck the Logs page for details.`)
@@ -128,8 +161,8 @@ export default function ProjectPage() {
       console.log(`Render all request sent successfully: ${result.scenes_count} scenes queued`)
       alert(`Successfully queued ${result.scenes_count} scene(s) for rendering!`)
       
-      // Refetch scenes to update status
-      await queryClient.refetchQueries({ queryKey: ['scenes', projectId] })
+      // Start polling for status updates
+      startStatusPolling()
     } catch (error: any) {
       console.error('Failed to start render all:', error)
       alert(`Failed to start render all: ${error.message || 'Unknown error'}\n\nCheck the Logs page for details.`)
@@ -165,7 +198,12 @@ export default function ProjectPage() {
         </Link>
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-3xl font-bold">{project.name}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold">{project.name}</h1>
+              <span className="text-sm text-muted-foreground font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                ID: {project.id}
+              </span>
+            </div>
             {project.description && (
               <p className="text-muted-foreground mt-2">{project.description}</p>
             )}
@@ -193,28 +231,126 @@ export default function ProjectPage() {
         }}
       />
 
-      <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Scenes</h2>
-        <div className="flex gap-2">
-          {scenes && scenes.length > 0 && (
-            <Button
-              variant="default"
-              onClick={handleRenderAll}
-              disabled={scenes.filter(s => s.status === 'pending').length === 0}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              <Film className="mr-2 h-4 w-4" />
-              Render All Scenes
-            </Button>
-          )}
-          <Button onClick={handleOpenSceneForm}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Scene
-          </Button>
-        </div>
-      </div>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="mb-6">
+          <TabsTrigger value="generate">
+            <Wand2 className="mr-2 h-4 w-4" />
+            Generate Script
+          </TabsTrigger>
+          <TabsTrigger value="render">
+            <Film className="mr-2 h-4 w-4" />
+            Render Video
+          </TabsTrigger>
+        </TabsList>
 
-      {showSceneForm && (
+        {/* Generate Script Tab */}
+        <TabsContent value="generate" className="space-y-6">
+          {script ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Script Generated</CardTitle>
+                <CardDescription>
+                  Your script has been generated. You can view and edit it, or proceed to render videos.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <strong>Total Duration:</strong> {script.video_duration}s
+                  </div>
+                  <div>
+                    <strong>Scene Count:</strong> {script.scene_count || 0}
+                  </div>
+                  <div>
+                    <strong>Style:</strong> {script.style}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Link href={`/project/${projectId}/script`}>
+                    <Button>
+                      <FileText className="mr-2 h-4 w-4" />
+                      View & Edit Script
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="outline"
+                    onClick={() => setActiveTab('render')}
+                  >
+                    Go to Render Video
+                    <Film className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Generate Script from Parameters</CardTitle>
+                  <CardDescription>
+                    Create a complete video script with characters and scenes from your story idea
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScriptGenerationForm
+                    projectId={projectId}
+                    onSuccess={(data) => {
+                      // Switch to render tab after successful generation
+                      setTimeout(() => {
+                        setActiveTab('render')
+                        queryClient.invalidateQueries({ queryKey: ['scenes', projectId] })
+                        queryClient.invalidateQueries({ queryKey: ['script', projectId] })
+                      }, 1000)
+                    }}
+                  />
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle>Or Use Advanced Workflow</CardTitle>
+                  <CardDescription>
+                    Use the multi-step workflow for more control over script generation
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Link href={`/project/${projectId}/script`}>
+                    <Button variant="outline" className="w-full">
+                      <FileText className="mr-2 h-4 w-4" />
+                      Open Script Generation Workflow
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Render Video Tab */}
+        <TabsContent value="render" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-semibold">Scenes</h2>
+            <div className="flex gap-2">
+              {scenes && scenes.length > 0 && (
+                <Button
+                  variant="default"
+                  onClick={handleRenderAll}
+                  disabled={scenes.filter(s => s.status === 'pending').length === 0}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  <Film className="mr-2 h-4 w-4" />
+                  Render All Scenes
+                </Button>
+              )}
+              <Button onClick={handleOpenSceneForm}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Scene
+              </Button>
+            </div>
+          </div>
+
+          {showSceneForm && (
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Create New Scene</CardTitle>
@@ -267,7 +403,7 @@ export default function ProjectPage() {
         </Card>
       )}
 
-      {scenesLoading ? (
+          {scenesLoading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin" />
         </div>
@@ -347,6 +483,8 @@ export default function ProjectPage() {
           ))}
         </div>
       )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

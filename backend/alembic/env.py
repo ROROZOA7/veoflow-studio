@@ -29,6 +29,7 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 from app.models.project import Project
 from app.models.scene import Scene
 from app.models.character import CharacterDNA
+from app.models.script import Script
 
 # target_metadata for 'autogenerate' support
 target_metadata = Base.metadata

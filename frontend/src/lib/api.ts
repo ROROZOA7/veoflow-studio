@@ -76,6 +76,22 @@ class ApiClient {
         method: 'POST',
         body: JSON.stringify({ prompt }),
       }),
+    generateScriptFromParameters: (id: string, data: {
+      main_content: string;
+      video_duration: number;
+      style: string;
+      target_audience: string;
+      aspect_ratio: string;
+      language?: string;
+      voice_style?: string;
+      music_style?: string;
+      color_palette?: string;
+      transition_style?: string;
+    }) =>
+      this.request<any>(`/api/projects/${id}/generate-script-from-parameters`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   };
 
   // Scenes API
@@ -96,6 +112,17 @@ class ApiClient {
     delete: (id: string) =>
       this.request<void>(`/api/scenes/${id}`, {
         method: 'DELETE',
+      }),
+    generatePrompts: (projectId: string, data: {
+      script_id: string;
+      character_dna: any[];
+      style: string;
+      aspect_ratio: string;
+      target_audience: string;
+    }) =>
+      this.request<any>(`/api/scenes/projects/${projectId}/generate-prompts`, {
+        method: 'POST',
+        body: JSON.stringify(data),
       }),
     render: (sceneId: string, projectId: string) =>
       this.request<{ task_id: string; status: string }>(
@@ -124,6 +151,17 @@ class ApiClient {
     delete: (id: string) =>
       this.request<void>(`/api/characters/${id}`, {
         method: 'DELETE',
+      }),
+    generate: (projectId: string, data: {
+      character_name: string;
+      character_description: string;
+      script_context: string;
+      style: string;
+      target_audience: string;
+    }) =>
+      this.request<any>(`/api/characters/projects/${projectId}/generate`, {
+        method: 'POST',
+        body: JSON.stringify(data),
       }),
   };
 
@@ -299,6 +337,55 @@ class ApiClient {
         message: string;
       }>(`/api/setup/profiles/${id}/close`, {
         method: 'POST',
+      }),
+  };
+
+  // Scripts API
+  scripts = {
+    get: (projectId: string) =>
+      this.request<any>(`/api/projects/${projectId}/script`),
+    update: (projectId: string, data: {
+      main_content?: string;
+      full_script?: string;
+      story_structure?: any;
+    }) =>
+      this.request<any>(`/api/projects/${projectId}/script`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    delete: (projectId: string) =>
+      this.request<void>(`/api/projects/${projectId}/script`, {
+        method: 'DELETE',
+      }),
+  };
+
+  // AI Config API
+  aiConfig = {
+    get: () => this.request<{
+      provider: string;
+      model: string;
+      temperature: number;
+      max_tokens: number;
+      has_openai_key: boolean;
+      has_anthropic_key: boolean;
+      has_gemini_key: boolean;
+    }>('/api/ai-config'),
+    update: (data: {
+      provider?: string;
+      model?: string;
+      temperature?: number;
+      max_tokens?: number;
+      openai_api_key?: string;
+      anthropic_api_key?: string;
+      gemini_api_key?: string;
+    }) =>
+      this.request<{
+        message: string;
+        provider: string;
+        model: string;
+      }>('/api/ai-config', {
+        method: 'PUT',
+        body: JSON.stringify(data),
       }),
   };
 

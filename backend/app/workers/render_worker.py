@@ -9,7 +9,6 @@ from app.config import settings
 from app.services.render_manager import RenderManager
 from app.models.scene import Scene
 from app.models.character import CharacterDNA
-from app.models.project import Project
 from app.core.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -28,9 +27,10 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    # FIX: Increased timeouts for video rendering (can take 2-4 minutes per scene)
-    task_time_limit=600,  # 10 minutes (hard limit)
-    task_soft_time_limit=540,  # 9 minutes (soft limit - raises SoftTimeLimitExceeded)
+    # FIX: Increased timeouts for video rendering (can take 2-10+ minutes per scene)
+    # Some complex prompts or slow generation can take 15+ minutes
+    task_time_limit=1200,  # 20 minutes (hard limit) - increased from 10 minutes
+    task_soft_time_limit=1140,  # 19 minutes (soft limit - raises SoftTimeLimitExceeded)
 )
 
 
@@ -64,16 +64,6 @@ def render_scene_task(self, scene_id: str, project_id: str):
         
         logger.info(f"Scene found: prompt={scene.prompt[:50]}..., status={scene.status}")
         
-        # Get project to retrieve render settings
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            logger.error(f"Project not found: {project_id}")
-            raise ValueError(f"Project {project_id} not found")
-        
-        # Get render settings from project
-        render_settings = project.get_render_settings()
-        logger.info(f"Using render settings: {render_settings}")
-        
         # Get characters for this project
         logger.info(f"Fetching characters for project: {project_id}")
         characters = db.query(CharacterDNA).filter(
@@ -94,9 +84,13 @@ def render_scene_task(self, scene_id: str, project_id: str):
         # Create render manager and render
         # Get worker ID for unique browser profile
         # Celery provides worker name via self.request.hostname
+        # IMPORTANT: Use task ID to ensure each task gets a unique profile, even if worker_id is same
         worker_name = getattr(self.request, 'hostname', None) or os.getenv("CELERY_WORKER_NAME", f"worker_{os.getpid()}")
-        worker_id = worker_name.split('@')[0] if '@' in worker_name else worker_name
-        logger.info(f"Creating RenderManager with worker_id: {worker_id}")
+        worker_id_base = worker_name.split('@')[0] if '@' in worker_name else worker_name
+        # Use task ID as part of worker_id to ensure uniqueness per task
+        task_id_short = self.request.id[:8]  # First 8 chars of task ID
+        worker_id = f"{worker_id_base}_{task_id_short}"
+        logger.info(f"Creating RenderManager with worker_id: {worker_id} (base: {worker_id_base}, task: {self.request.id})")
         render_manager = RenderManager(worker_id=worker_id)
         logger.info("RenderManager created")
         
@@ -115,6 +109,14 @@ def render_scene_task(self, scene_id: str, project_id: str):
             asyncio.set_event_loop(loop)
         
         try:
+            # Get render settings from project
+            from app.models.project import Project
+            project = db.query(Project).filter(Project.id == project_id).first()
+            render_settings = None
+            if project:
+                render_settings = project.get_render_settings()
+                logger.info(f"Using render settings: {render_settings}")
+            
             # Run async render with render settings
             logger.info("Starting async render process...")
             result = loop.run_until_complete(
@@ -138,20 +140,30 @@ def render_scene_task(self, scene_id: str, project_id: str):
         scene = db.query(Scene).filter(Scene.id == scene_id).first()
         if not scene:
             logger.error(f"Scene not found when trying to update status: {scene_id}")
-            raise ValueError(f"Scene {scene_id} not found when updating status")
+            # Don't raise here - result already contains the error
+            logger.error("Cannot update scene status - scene not found in database")
+            return result
         
         logger.info(f"Updating scene status: success={result.get('success')}")
-        if result["success"]:
-            scene.status = "completed"
-            scene.video_path = result.get("video_path")
-            logger.info(f"Scene marked as completed. Video path: {scene.video_path}")
-        else:
-            scene.status = "failed"
-            error_msg = result.get("error", "Unknown error")
-            logger.error(f"Scene marked as failed. Error: {error_msg}")
+        try:
+            if result.get("success"):
+                scene.status = "completed"
+                scene.video_path = result.get("video_path")
+                logger.info(f"Scene marked as completed. Video path: {scene.video_path}")
+            else:
+                scene.status = "failed"
+                error_msg = result.get("error", "Unknown error")
+                logger.error(f"Scene marked as failed. Error: {error_msg}")
+            
+            db.commit()
+            logger.info(f"Scene status updated to '{scene.status}' and committed to database")
+        except Exception as commit_error:
+            logger.error(f"Failed to update scene status: {commit_error}", exc_info=True)
+            try:
+                db.rollback()
+            except:
+                pass
         
-        db.commit()
-        logger.info(f"Scene status updated to '{scene.status}' and committed to database")
         logger.info("=== RENDER TASK COMPLETED ===")
         
         return result

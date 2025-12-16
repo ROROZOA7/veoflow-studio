@@ -44,16 +44,18 @@ async def health():
 
 
 # Import API routers
-from app.api import projects, scenes, characters, render, queue, setup, logs
+from app.api import projects, scenes, characters, render, queue, setup, logs, scripts, ai_config
 
 # Register API routers
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(scenes.router, prefix="/api/scenes", tags=["scenes"])
 app.include_router(characters.router, prefix="/api/characters", tags=["characters"])
+app.include_router(scripts.router, prefix="/api", tags=["scripts"])
 app.include_router(render.router, prefix="/api/render", tags=["render"])
 app.include_router(queue.router, prefix="/api/queue", tags=["queue"])
 app.include_router(setup.router, prefix="/api/setup", tags=["setup"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
+app.include_router(ai_config.router, prefix="/api", tags=["ai-config"])
 
 
 if __name__ == "__main__":

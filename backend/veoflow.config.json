@@ -1,7 +1,7 @@
 {
   "browser": {
     "engine": "playwright",
-    "headless": false,
+    "headless": true,
     "chromeProfilePath": "./chromedata",
     "userDataDir": "./chromedata",
     "useExistingProfile": false,
@@ -44,10 +44,10 @@
   },
   "ai": {
     "provider": "openai",
-    "model": "gpt-4-turbo-preview",
+    "model": "gpt-4o-mini",
     "apiKey": "",
     "temperature": 0.7,
-    "maxTokens": 2000
+    "maxTokens": 5000
   },
   "queue": {
     "concurrency": 1,

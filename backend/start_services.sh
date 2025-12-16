@@ -59,7 +59,7 @@ trap cleanup SIGINT SIGTERM
 
 # Start FastAPI server
 echo -e "${GREEN}[1/2] Starting FastAPI server on http://localhost:8000${NC}"
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude "profiles/*" --reload-exclude "output/*" --reload-exclude "logs/*" --reload-exclude "images/*" --reload-exclude "venv/*" --reload-exclude "chromedata/*" --reload-exclude "**/__pycache__/*" &
 FASTAPI_PID=$!
 
 # Wait a bit for FastAPI to start

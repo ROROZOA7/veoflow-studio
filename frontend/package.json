@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev",
+    "dev:clean": "rm -rf .next && npm run dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "clean": "rm -rf .next node_modules/.cache"
   },
   "dependencies": {
     "next": "^14.0.0",
